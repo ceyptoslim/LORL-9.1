@@ -2,20 +2,30 @@
 LORL-9.1 Literature Agent — Research and literature review agent.
 
 Analyzes research topics, summarizes findings, and produces structured
-literature reviews. In production, this would connect to Ollama/Llama3
-for zero-cost inference. For testing, it uses deterministic mock responses.
+literature reviews. Connects to Ollama/Llama3 for zero-cost inference when enabled,
+falling back to deterministic responses if unavailable.
 """
 
 from __future__ import annotations
 
+from typing import Optional
+
 from lorl.agents.base_agent import AgentResponse, BaseAgent
+from lorl.agents.ollama_client import OllamaClient
 
 
 class LiteratureAgent(BaseAgent):
     """Research agent that analyzes topics and produces literature summaries."""
 
-    def __init__(self, agent_id: str = "literature-agent"):
+    def __init__(
+        self,
+        agent_id: str = "literature-agent",
+        use_ollama: bool = False,
+        ollama_client: Optional[OllamaClient] = None,
+    ):
         super().__init__(agent_id, "literature")
+        self.use_ollama = use_ollama
+        self.ollama_client = ollama_client or OllamaClient()
 
     async def execute(self, task: dict) -> AgentResponse:
         """Execute a literature research task.
@@ -23,6 +33,7 @@ class LiteratureAgent(BaseAgent):
         Expected task keys:
             - topic: The research topic to analyze
             - depth: (optional) Research depth — 'quick' or 'comprehensive'
+            - use_ollama: (optional) Override agent default for Ollama usage
         """
         topic = task.get("topic", "")
         depth = task.get("depth", "comprehensive")
@@ -34,8 +45,27 @@ class LiteratureAgent(BaseAgent):
                 data={"error": "missing_topic"},
             )
 
-        # In production, this calls Ollama/Llama3 for zero-cost inference
-        # For now, deterministic response based on topic analysis
+        use_ollama = task.get("use_ollama", self.use_ollama)
+        if use_ollama:
+            prompt = f"Conduct a literature review on topic: '{topic}' at {depth} depth."
+            ollama_response = await self.ollama_client.generate(prompt)
+            if ollama_response is not None:
+                return self._create_response(
+                    reasoning=f"Researched '{topic}' at {depth} depth via Ollama",
+                    confidence=0.9,
+                    data={
+                        "topic": topic,
+                        "depth": depth,
+                        "key_findings": [ollama_response],
+                        "source_count": max(10, len(topic.split()) * 3),
+                        "ollama_response": ollama_response,
+                    },
+                    recommendations=[
+                        f"Further investigation recommended for: {topic}",
+                        "Validate findings with peer review",
+                    ],
+                )
+
         reasoning = f"Researched '{topic}' at {depth} depth"
         findings = self._analyze_topic(topic, depth)
 
