@@ -24,6 +24,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from lorl import __version__
 from lorl.api import routes
 from lorl.core.ledger import EventLedger
+from lorl.governance import PolicyEnforcer
 
 
 def create_app() -> FastAPI:
@@ -48,11 +49,13 @@ def create_app() -> FastAPI:
     ledger = EventLedger(os.environ.get("LORL_DB_URL", "sqlite:///lorl.db"))
     labs: dict[str, dict] = {}
     treaties: dict[str, dict] = {}
+    policy_enforcer = PolicyEnforcer()
 
     # Store references on app state
     app.state.ledger = ledger
     app.state.labs = labs
     app.state.treaties = treaties
+    app.state.policy_enforcer = policy_enforcer
     app.state.start_time = datetime.now(timezone.utc)
 
     # Register routes
