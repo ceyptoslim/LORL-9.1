@@ -17,6 +17,7 @@ from lorl.agents import AuditorAgent, LiteratureAgent, SkepticAgent
 from lorl.core.identity import Identity
 from lorl.core.ledger import Event, EventType
 from lorl.core.treaty_engine import TreatyEngine
+from lorl.governance import PolicyEnforcer
 
 # ---------------------------------------------------------------------------
 # Pydantic Models
@@ -41,6 +42,13 @@ class TreatyAction(BaseModel):
 class AgentTask(BaseModel):
     agent_type: str = Field(..., pattern="^(literature|skeptic|auditor)$")
     task: dict = Field(default_factory=dict)
+
+class GovernedAgentTask(BaseModel):
+    agent_type: str = Field(..., pattern="^(literature|skeptic|auditor)$")
+    task: dict = Field(default_factory=dict)
+    custos_url: str = Field(default="http://localhost:8000")
+    tenant_id: str = Field(default="default")
+
 
 
 # ---------------------------------------------------------------------------
@@ -101,6 +109,18 @@ def register_routes(app: FastAPI) -> None:
     async def propose_treaty(proposal: TreatyProposal):
         treaties = app.state.treaties
         ledger = app.state.ledger
+        enforcer: PolicyEnforcer = getattr(app.state, "policy_enforcer", None) or PolicyEnforcer()
+
+        actor_registered = proposal.proposer_id in app.state.labs if app.state.labs else True
+        allowed, deny_reasons = await enforcer.check_treaty_proposal(
+            proposer_id=proposal.proposer_id,
+            responder_id=proposal.responder_id,
+            terms=proposal.terms,
+            actor_registered=actor_registered,
+        )
+        if not allowed:
+            detail = f"Policy check failed: {', '.join(deny_reasons)}" if deny_reasons else "Policy check failed"
+            raise HTTPException(403, detail)
 
         try:
             treaty = engine.propose(
@@ -207,6 +227,16 @@ def register_routes(app: FastAPI) -> None:
 
         response = await agent.execute(task.task)
 
+        enforcer: PolicyEnforcer = getattr(app.state, "policy_enforcer", None) or PolicyEnforcer()
+        allowed, deny_reasons = await enforcer.check_agent_decision(
+            agent_type=task.agent_type,
+            confidence=response.confidence,
+            actor_registered=True,
+        )
+        if not allowed:
+            detail = f"Policy check failed: {', '.join(deny_reasons)}" if deny_reasons else "Policy check failed"
+            raise HTTPException(403, detail)
+
         ledger = app.state.ledger
         ledger.append(Event(
             event_type=EventType.AGENT_DECISION,
@@ -216,3 +246,32 @@ def register_routes(app: FastAPI) -> None:
         ))
 
         return response.to_dict()
+
+
+    # --- Governed Agent Execution ---
+
+    @app.post("/api/v1/agents/governed-execute")
+    async def governed_execute(task: GovernedAgentTask):
+        """Execute an agent task through CUSTOS governance."""
+        from lorl.governance import CustosClient, GovernedExecutor
+
+        if task.agent_type == "literature":
+            agent = LiteratureAgent()
+        elif task.agent_type == "skeptic":
+            agent = SkepticAgent()
+        elif task.agent_type == "auditor":
+            agent = AuditorAgent()
+        else:
+            raise HTTPException(400, f"Unknown agent type: {task.agent_type}")
+
+        custos_client = CustosClient(
+            custos_url=task.custos_url,
+            jwt_secret="lorl-dev-secret",
+            tenant_id=task.tenant_id,
+        )
+
+        ledger = app.state.ledger
+        executor = GovernedExecutor(agent=agent, custos_client=custos_client, ledger=ledger)
+        result = await executor.execute(task.task)
+
+        return result
