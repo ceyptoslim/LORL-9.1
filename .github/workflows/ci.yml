@@ -1,0 +1,89 @@
+name: LORL-9.1 CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Lint & Test (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ matrix.python-version }}-${{ hashFiles('requirements.txt', 'requirements-dev.txt') }}
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Lint with ruff
+        run: |
+          ruff check lorl/ tests/
+
+      - name: Security scan with bandit
+        run: |
+          bandit -r lorl/ -ll -ii
+
+      - name: Dependency audit
+        run: |
+          pip-audit -r requirements.txt --strict
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --tb=short \
+            --cov=lorl \
+            --cov-report=term-missing \
+            --cov-report=xml:coverage.xml
+
+      - name: Upload coverage
+        if: matrix.python-version == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.xml
+          retention-days: 30
+
+      - name: Verify coverage threshold
+        if: matrix.python-version == '3.12'
+        run: |
+          pytest tests/ --cov=lorl --cov-report=term-missing --cov-fail-under=80
+
+  docker:
+    name: Docker Build Check
+    runs-on: ubuntu-latest
+    needs: test
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t lorl-9.1:ci .
+
+      - name: Smoke test container
+        run: |
+          docker run -d --name lorl-smoke -p 8000:8000 lorl-9.1:ci
+          trap "docker stop lorl-smoke || true" EXIT
+          for i in $(seq 1 10); do
+            curl -sf http://localhost:8000/health && break
+            echo "Waiting... attempt $i"
+            sleep 3
+          done
+          curl -f http://localhost:8000/health
