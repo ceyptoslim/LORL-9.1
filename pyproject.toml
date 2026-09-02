@@ -7,7 +7,7 @@ name = "lorl"
 version = "0.1.0"
 description = "LORL-9.1: Event-sourced institutional intelligence OS with Ed25519 identity, PostgreSQL ledger, treaty engine, and CUSTOS-Core governance integration."
 readme = "README.md"
-license = {text = "Apache-2.0"}
+license = {text = "AGPL-3.0-only"}
 requires-python = ">=3.10"
 authors = [{name = "ceyptoslim"}]
 

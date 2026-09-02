@@ -5,6 +5,11 @@ Analyzes research topics, summarizes findings, and produces structured
 literature reviews. Connects to Ollama/Llama3 for zero-cost inference when enabled,
 falling back to deterministic responses if unavailable.
 """
+# Copyright (C) 2024-2026 FroLife Productions
+# Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+# See LICENSE file for details. Commercial license available upon request.
+
+
 
 from __future__ import annotations
 

@@ -5,6 +5,11 @@ Treaties are formal agreements between labs that define terms for resource
 sharing, revenue splits, data access, and governance rules. The engine
 manages the full lifecycle: propose → accept/reject → active → expired.
 """
+# Copyright (C) 2024-2026 FroLife Productions
+# Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+# See LICENSE file for details. Commercial license available upon request.
+
+
 
 from __future__ import annotations
 

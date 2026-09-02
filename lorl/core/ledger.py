@@ -7,6 +7,11 @@ by sequence number within each aggregate (treaty, lab, etc.).
 
 Supports both SQLite (dev) and PostgreSQL (production) backends.
 """
+# Copyright (C) 2024-2026 FroLife Productions
+# Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+# See LICENSE file for details. Commercial license available upon request.
+
+
 
 from __future__ import annotations
 

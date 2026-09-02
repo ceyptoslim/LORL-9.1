@@ -12,6 +12,16 @@ Endpoints:
     GET  /api/v1/audit        — Retrieve the full event ledger
     POST /api/v1/agents/execute — Execute an agent task
 """
+# Copyright (C) 2024-2026 FroLife Productions
+# Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+# See LICENSE file for details. Commercial license available upon request.
+
+
+# Copyright (C) 2024-2026 FroLife Productions
+# Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
+# See LICENSE file for details. Commercial license available upon request.
+
+
 
 from __future__ import annotations
 
