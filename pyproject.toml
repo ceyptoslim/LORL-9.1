@@ -1,15 +1,18 @@
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "lorl"
 version = "0.2.0"
 description = "LORL-9.1: Event-sourced institutional intelligence OS with Ed25519 identity, PostgreSQL ledger, treaty engine, and CUSTOS-Core governance integration."
 readme = "README.md"
-license = {text = "AGPL-3.0-only"}
+license = "AGPL-3.0-only"
 requires-python = ">=3.10"
 authors = [{name = "ceyptoslim"}]
+
+[tool.setuptools.packages.find]
+include = ["lorl*"]
 
 [tool.ruff]
 line-length = 100
