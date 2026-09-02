@@ -4,7 +4,7 @@ build-backend = "setuptools.backends._legacy:_Backend"
 
 [project]
 name = "lorl"
-version = "0.1.0"
+version = "0.2.0"
 description = "LORL-9.1: Event-sourced institutional intelligence OS with Ed25519 identity, PostgreSQL ledger, treaty engine, and CUSTOS-Core governance integration."
 readme = "README.md"
 license = {text = "AGPL-3.0-only"}
