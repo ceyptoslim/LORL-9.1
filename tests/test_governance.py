@@ -1,5 +1,7 @@
 """
 Tests for LORL-9.1 Governance wiring and CUSTOS-Core integration.
+
+Fail-closed semantics (v0.2.0+): CUSTOS unavailable → DENY, no ungoverned path.
 """
 
 from __future__ import annotations
@@ -81,7 +83,6 @@ async def test_governed_executor_records_agent_decision_when_allowed(monkeypatch
 
     assert result["custos_approved"] is True
     assert result["governance_status"] == "approved"
-    assert result["ungoverned"] is False
     assert result["custos_audit_hash"] == "hash_abc_123"
 
     events = ledger.get_all_events()
@@ -113,9 +114,9 @@ async def test_governed_executor_records_governance_check_when_denied(monkeypatc
 
     assert result["custos_approved"] is False
     assert result["governance_status"] == "denied"
-    assert result["ungoverned"] is False
     assert result["reason"] == "Policy violation: high risk domain"
     assert result["triggered_rule"] == "rule_risk_policy_01"
+    assert result.get("agent_output_withheld") is True
 
     events = ledger.get_all_events()
     assert len(events) == 1
@@ -124,9 +125,10 @@ async def test_governed_executor_records_governance_check_when_denied(monkeypatc
     assert events[0]["data"]["reason"] == "Policy violation: high risk domain"
 
 
-# (d) GovernedExecutor handles CUSTOS unavailability gracefully (executes but flags as ungoverned)
+# (d) GovernedExecutor handles CUSTOS unavailability — FAIL CLOSED (v0.2.0+)
 @pytest.mark.asyncio
 async def test_governed_executor_handles_custos_unavailability(monkeypatch):
+    """CUSTOS unavailable → DENY execution, no ungoverned path."""
     ledger = EventLedger("sqlite:///:memory:")
     custos_client = CustosClient("http://localhost:8000", TEST_JWT_SECRET, "tenant-1")
 
@@ -140,16 +142,18 @@ async def test_governed_executor_handles_custos_unavailability(monkeypatch):
 
     result = await executor.execute({"topic": "AI Safety"})
 
+    # Fail-closed: execution is denied, no ungoverned path
     assert result["custos_approved"] is False
-    assert result["ungoverned"] is True
-    assert result["governance_status"] == "ungoverned"
-    assert result["agent_type"] == "literature"
-    assert "reasoning" in result
+    assert result["governance_status"] == "denied"
+    assert "CUSTOS unavailable" in result["reason"]
+    assert result.get("ungoverned") is not True
+    assert result.get("agent_output_withheld") is True
 
     events = ledger.get_all_events()
     assert len(events) == 1
-    assert events[0]["event_type"] == EventType.AGENT_DECISION.value
-    assert events[0]["data"]["ungoverned"] is True
+    assert events[0]["event_type"] == EventType.GOVERNANCE_CHECK.value
+    assert events[0]["data"]["custos_approved"] is False
+    assert events[0]["data"]["fail_closed"] is True
 
 
 # (e) The /api/v1/agents/governed-execute endpoint works
@@ -207,6 +211,7 @@ class TestGovernedExecutionAPI:
         assert data["reason"] == "Policy violation"
 
     def test_governed_execute_endpoint_custos_unavailable(self, monkeypatch):
+        """CUSTOS unavailable via API → execution denied, no ungoverned path."""
         app = create_app()
         client = TestClient(app)
 
@@ -231,5 +236,7 @@ class TestGovernedExecutionAPI:
         assert response.status_code == 200
         data = response.json()
         assert data["agent_type"] == "auditor"
-        assert data["ungoverned"] is True
-        assert data["governance_status"] == "ungoverned"
+        assert data["custos_approved"] is False
+        assert data["governance_status"] == "denied"
+        assert "CUSTOS unavailable" in data["reason"]
+        assert data.get("ungoverned") is not True

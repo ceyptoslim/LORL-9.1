@@ -18,7 +18,12 @@ from lorl.governance.custos_client import CustosClient
 
 
 class GovernedExecutor:
-    """Wrapper that executes an agent, evaluates results with CUSTOS, and logs to event ledger."""
+    """Wrapper that executes an agent, evaluates results with CUSTOS, and logs to event ledger.
+
+    Fail-closed semantics (v0.2.0+): if CUSTOS is unavailable, execution is
+    DENIED and no agent output is returned. This removes the previous
+    'ungoverned' path that allowed execution without governance approval.
+    """
 
     def __init__(
         self,
@@ -33,7 +38,11 @@ class GovernedExecutor:
     async def execute(
         self, task: dict, ledger: Optional[EventLedger] = None
     ) -> dict:
-        """Execute the wrapped agent task with CUSTOS policy evaluation."""
+        """Execute the wrapped agent task with CUSTOS policy evaluation.
+
+        Fail-closed: if CUSTOS is unavailable, returns a DENY result without
+        executing the agent. No governance decision → no execution.
+        """
         effective_ledger = ledger if ledger is not None else self.ledger
 
         # 1. Execute agent task
@@ -56,21 +65,23 @@ class GovernedExecutor:
         )
 
         if is_unavailable:
-            # Handle CUSTOS unavailability gracefully: flag as ungoverned
+            # Fail-closed: CUSTOS unavailable → DENY execution
+            # No 'ungoverned' path — agent output is not returned
             resp_dict["custos_approved"] = False
-            resp_dict["ungoverned"] = True
-            resp_dict["governance_status"] = "ungoverned"
-            resp_dict["reason"] = "CUSTOS unavailable"
+            resp_dict["governance_status"] = "denied"
+            resp_dict["reason"] = "CUSTOS unavailable — execution denied (fail-closed)"
+            resp_dict["agent_output_withheld"] = True
 
             if effective_ledger:
                 effective_ledger.append(
                     Event(
-                        event_type=EventType.AGENT_DECISION,
+                        event_type=EventType.GOVERNANCE_CHECK,
                         actor_id=response.agent_id,
                         aggregate_id=response.task_id,
                         data={
-                            **resp_dict,
-                            "ungoverned": True,
+                            "custos_approved": False,
+                            "reason": "CUSTOS unavailable",
+                            "fail_closed": True,
                         },
                     )
                 )
@@ -79,7 +90,6 @@ class GovernedExecutor:
         if eval_result.get("allowed", False):
             # CUSTOS approved execution
             resp_dict["custos_approved"] = True
-            resp_dict["ungoverned"] = False
             resp_dict["governance_status"] = "approved"
             if "audit_record_hash" in eval_result:
                 resp_dict["custos_audit_hash"] = eval_result["audit_record_hash"]
@@ -102,10 +112,10 @@ class GovernedExecutor:
         else:
             # CUSTOS denied execution
             resp_dict["custos_approved"] = False
-            resp_dict["ungoverned"] = False
             resp_dict["governance_status"] = "denied"
             resp_dict["reason"] = eval_result.get("reason")
             resp_dict["triggered_rule"] = eval_result.get("triggered_rule")
+            resp_dict["agent_output_withheld"] = True
 
             if effective_ledger:
                 effective_ledger.append(
