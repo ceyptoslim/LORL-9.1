@@ -107,8 +107,8 @@ async def governed_execute(agent, task, custos_url="http://custos:8000"):
 | Governance | OPA / Rego |
 | CI/CD | GitHub Actions (Python 3.10/3.11/3.12) |
 | Container | Docker + Docker Compose |
-| License | Apache 2.0 |
+| License | AGPL-3.0 |
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+AGPL-3.0 — see [LICENSE](LICENSE). Commercial licensing available — see [NOTICE.md](NOTICE.md).
