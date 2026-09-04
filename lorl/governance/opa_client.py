@@ -48,7 +48,9 @@ class OPAClient:
 
         res = data.get("result")
         if isinstance(res, dict):
-            allowed = bool(res.get("allow", False))
+            # Strict Boolean — only a literal True authorizes (matches CUSTOS-CORE
+            # opa_engine.py). Truthy non-Boolean values (e.g. "false", 1) must DENY.
+            allowed = res.get("allow") is True
             deny_messages = list(res.get("deny") or res.get("deny_messages") or [])
         elif isinstance(res, bool):
             allowed = res

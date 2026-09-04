@@ -417,3 +417,60 @@ class TestAPIEndpointsOPAEnforcement:
 
             assert response.status_code == 403
             assert "unavailable" in response.json()["detail"].lower() or "failed" in response.json()["detail"].lower()
+
+
+class TestOPAClientStrictBoolean:
+    """F-001: truthy non-Boolean 'allow' values must NEVER authorize.
+
+    A malformed or adversarial OPA response containing {"allow": "false"},
+    {"allow": 1}, or any truthy non-True value must be treated as DENY,
+    matching the hardened CUSTOS-CORE opa_engine.py strict-Boolean pattern.
+    """
+
+    @staticmethod
+    def _mock_response(payload):
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_response.json.return_value = payload
+        return mock_response
+
+    async def _check(self, opa_client, payload):
+        with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
+            mock_post.return_value = self._mock_response(payload)
+            return await opa_client.check_policy({"action": "test"})
+
+    async def test_string_false_denies(self, opa_client):
+        """{"allow": "false"} is truthy to bool() but must DENY."""
+        allowed, deny_messages = await self._check(
+            opa_client, {"result": {"allow": "false"}}
+        )
+        assert allowed is False
+        assert deny_messages == []
+
+    async def test_integer_truthy_denies(self, opa_client):
+        """{"allow": 1} is truthy to bool() but must DENY."""
+        allowed, _ = await self._check(opa_client, {"result": {"allow": 1}})
+        assert allowed is False
+
+    async def test_list_truthy_denies(self, opa_client):
+        """{"allow": ["yes"]} is truthy to bool() but must DENY."""
+        allowed, _ = await self._check(opa_client, {"result": {"allow": ["yes"]}})
+        assert allowed is False
+
+    async def test_missing_allow_denies(self, opa_client):
+        allowed, _ = await self._check(opa_client, {"result": {"deny": ["no rule matched"]}})
+        assert allowed is False
+
+    async def test_literal_true_allows(self, opa_client):
+        """Only a literal Boolean True authorizes."""
+        allowed, _ = await self._check(opa_client, {"result": {"allow": True}})
+        assert allowed is True
+
+    async def test_literal_false_denies(self, opa_client):
+        allowed, _ = await self._check(opa_client, {"result": {"allow": False}})
+        assert allowed is False
+
+    async def test_top_level_bool_true_allows(self, opa_client):
+        allowed, _ = await self._check(opa_client, {"result": True})
+        assert allowed is True

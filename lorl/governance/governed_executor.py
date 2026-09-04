@@ -20,9 +20,14 @@ from lorl.governance.custos_client import CustosClient
 class GovernedExecutor:
     """Wrapper that executes an agent, evaluates results with CUSTOS, and logs to event ledger.
 
-    Fail-closed semantics (v0.2.0+): if CUSTOS is unavailable, execution is
-    DENIED and no agent output is returned. This removes the previous
-    'ungoverned' path that allowed execution without governance approval.
+    Fail-closed semantics (v0.2.0+): if CUSTOS is unavailable, the agent's
+    output is DENIED and withheld — no ungoverned output is ever returned.
+
+    Governance model: this is DECISION/OUTPUT governance for side-effect-free
+    (read-only research) agents — the agent computes, then CUSTOS evaluates the
+    result before it is returned to the caller. It is NOT pre-execution action
+    enforcement; side-effectful agents would additionally require a pre-flight
+    gate that evaluates the proposed action BEFORE the consequential operation.
     """
 
     def __init__(
@@ -40,8 +45,11 @@ class GovernedExecutor:
     ) -> dict:
         """Execute the wrapped agent task with CUSTOS policy evaluation.
 
-        Fail-closed: if CUSTOS is unavailable, returns a DENY result without
-        executing the agent. No governance decision → no execution.
+        Fail-closed (output governance): the agent runs (side-effect-free
+        research computation), and its output is returned ONLY if CUSTOS
+        allows it. If CUSTOS is unavailable, the output is DENIED and withheld
+        (`agent_output_withheld: True`). No governance decision → no governed
+        output reaches the caller.
         """
         effective_ledger = ledger if ledger is not None else self.ledger
 

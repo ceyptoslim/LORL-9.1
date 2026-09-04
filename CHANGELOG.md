@@ -6,6 +6,24 @@ open" format — no claims beyond what the code and tests demonstrate.
 
 ---
 
+## [0.2.1] — 2026-09-04
+
+### Fixed
+- **OPA strict-Boolean authorization (F-001, security):** `OPAClient.check_policy` now
+  requires a literal `True` (`res.get("allow") is True`) in dict-form OPA responses,
+  matching CUSTOS-CORE's hardened `opa_engine.py` pattern. Previously a truthy non-Boolean
+  value (e.g. `{"allow": "false"}`, `{"allow": 1}`) would coerce to authorized via
+  `bool()`. Seven adversarial tests added covering string-false, integer, list, missing,
+  literal True/False, and top-level Boolean cases.
+- **GovernedExecutor docstrings (F-002, documentation accuracy):** docstrings now
+  accurately describe the governance model — decision/output governance for
+  side-effect-free (read-only research) agents, where the agent's output is evaluated by
+  CUSTOS before being returned and withheld on DENY (`agent_output_withheld: true`).
+  The prior wording ("returns a DENY result without executing the agent") misdescribed
+  the code. Pre-execution action enforcement remains a separate boundary
+  (CUSTOS-CORE enterprise `/v1/execute`); a pre-flight gate would be required before
+  any side-effectful agent is introduced.
+
 ## [0.2.0] — Fail-Closed Governance & Release Readiness
 
 ### Security: OPA and CUSTOS Fail-Closed Alignment
