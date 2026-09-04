@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lorl"
-version = "0.2.0"
+version = "0.2.1"
 description = "LORL-9.1: Event-sourced institutional intelligence OS with Ed25519 identity, PostgreSQL ledger, treaty engine, and CUSTOS-Core governance integration."
 readme = "README.md"
 license = "AGPL-3.0-only"
