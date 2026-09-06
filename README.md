@@ -1,8 +1,8 @@
 # LORL-9.1
 
 [![CI](https://github.com/ceyptoslim/LORL-9.1/actions/workflows/ci.yml/badge.svg)](https://github.com/ceyptoslim/LORL-9.1/actions)
-[![Python](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-AGPL-3.0-red)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-blue?style=flat)](https://www.python.org/downloads/)
+[![License](https://img.shields.io/badge/License-AGPL%20v3-red?style=flat)](LICENSE)
 
 **LORL-9.1: Event-sourced institutional intelligence OS with Ed25519 cryptographic identity, PostgreSQL ledger, treaty engine, and CUSTOS-Core governance integration.**
 
