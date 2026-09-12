@@ -9,13 +9,12 @@ LORL-9.1 CUSTOS-Core Client — Async client for CUSTOS governance evaluation.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 import httpx
 import jwt
 
-
-import os
 
 class CustosClient:
     """Async client for interacting with CUSTOS-Core governance evaluation service."""
