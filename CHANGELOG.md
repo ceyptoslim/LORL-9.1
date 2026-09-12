@@ -6,6 +6,23 @@ open" format — no claims beyond what the code and tests demonstrate.
 
 ---
 
+## [0.3.0] — 2026-09-11
+
+### Security
+- **Fail-closed production secrets (PR #7):** hardcoded `lorl-dev-secret` removed
+  from the task-execution route; `CustosClient` resolves `LORL_CUSTOS_JWT_SECRET`
+  from the environment (dev fallback outside production only); `create_app()`
+  refuses to construct when `CUSTOS_ENV=production` with an unset/dev-default
+  secret. +8 regression tests.
+- **CORS hardening:** replaced the spec-invalid `allow_origins=["*"]` +
+  `allow_credentials=True` combination with explicit origins from
+  `LORL_CORS_ORIGINS` (sane localhost defaults for development).
+
+### Changed
+- Version bump 0.2.1 → 0.3.0 (constructor signature: `jwt_secret` default now
+  `None`, resolved from env — behavior change for anyone relying on the old
+  default).
+
 ## [0.2.1] — 2026-09-04
 
 ### Fixed

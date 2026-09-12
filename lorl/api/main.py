@@ -50,10 +50,20 @@ def create_app() -> FastAPI:
         version=__version__,
     )
 
-    # CORS
+    # CORS — explicit origins only (wildcard + credentials is spec-invalid;
+    # browsers reject it and it signals no coherent access policy).
+    # Production deployments set LORL_CORS_ORIGINS to their real origins.
+    cors_origins = [
+        o.strip()
+        for o in os.environ.get(
+            "LORL_CORS_ORIGINS",
+            "http://localhost:3000,http://localhost:5173,http://localhost:8080",
+        ).split(",")
+        if o.strip()
+    ]
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
+        allow_origins=cors_origins,
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
