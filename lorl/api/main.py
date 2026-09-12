@@ -39,6 +39,10 @@ from lorl.governance import PolicyEnforcer
 
 def create_app() -> FastAPI:
     """Create and configure the LORL FastAPI application."""
+    # Fail-closed security validation: refuse to construct in production with
+    # missing/dev-default secrets (strict env-presence rule).
+    from lorl.governance.custos_client import validate_production_secrets
+    validate_production_secrets()
     app = FastAPI(
         title="LORL-9.1",
         description="Event-sourced institutional intelligence OS with Ed25519 identity, "
