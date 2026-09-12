@@ -9,6 +9,7 @@ LORL-9.1 CUSTOS-Core Client — Async client for CUSTOS governance evaluation.
 
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 
 import httpx
@@ -18,14 +19,17 @@ import jwt
 class CustosClient:
     """Async client for interacting with CUSTOS-Core governance evaluation service."""
 
+    _DEV_DEFAULT_SECRET = "custos-secret-key-at-least-32-bytes-long!"
+
     def __init__(
         self,
         custos_url: str = "http://localhost:8000",
-        jwt_secret: str = "custos-secret-key-at-least-32-bytes-long!",
+        jwt_secret: str | None = None,
         tenant_id: str = "default",
     ):
         self.custos_url = custos_url.rstrip("/")
-        self.jwt_secret = jwt_secret
+        # Resolve from env first (LORL_CUSTOS_JWT_SECRET); dev fallback only.
+        self.jwt_secret = jwt_secret or os.getenv("LORL_CUSTOS_JWT_SECRET", self._DEV_DEFAULT_SECRET)
         self.tenant_id = tenant_id
 
     def create_token(self) -> str:
@@ -62,3 +66,16 @@ class CustosClient:
                 }
         except Exception:
             return {"allowed": False, "reason": "CUSTOS unavailable"}
+
+
+def validate_production_secrets() -> None:
+    """Fail closed: refuse to run in production with a dev-default JWT secret."""
+    import os as _os
+    if _os.getenv("CUSTOS_ENV", "development").lower() != "production":
+        return
+    secret = _os.getenv("LORL_CUSTOS_JWT_SECRET")
+    if not secret or secret == CustosClient._DEV_DEFAULT_SECRET:
+        raise RuntimeError(
+            "LORL_CUSTOS_JWT_SECRET is unset or set to the dev default while "
+            "CUSTOS_ENV=production. Set a strong unique secret (fail-closed)."
+        )

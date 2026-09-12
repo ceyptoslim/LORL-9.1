@@ -271,9 +271,8 @@ def register_routes(app: FastAPI) -> None:
 
         custos_client = CustosClient(
             custos_url=task.custos_url,
-            jwt_secret="lorl-dev-secret",
             tenant_id=task.tenant_id,
-        )
+        )  # jwt_secret resolves from LORL_CUSTOS_JWT_SECRET (dev fallback)
 
         ledger = app.state.ledger
         executor = GovernedExecutor(agent=agent, custos_client=custos_client, ledger=ledger)
