@@ -12,6 +12,7 @@ This keeps the main.py clean and makes routes testable independently.
 
 from __future__ import annotations
 
+import os
 from typing import Optional
 
 from fastapi import FastAPI, HTTPException
@@ -49,10 +50,20 @@ class AgentTask(BaseModel):
     task: dict = Field(default_factory=dict)
 
 class GovernedAgentTask(BaseModel):
+    """A task for CUSTOS-governed agent execution.
+
+    Fix (Oct 2026 audit): ``custos_url`` and ``tenant_id`` were previously
+    client-controlled request fields — any caller could point governance at
+    their own permissive CUSTOS instance. The governance target is now
+    server-side configuration: set ``LORL_CUSTOS_URL`` and
+    ``LORL_CUSTOS_TENANT_ID`` in the environment (defaults: local CUSTOS,
+    tenant "default"). Old payloads carrying the removed fields are ignored.
+    """
+
+    model_config = {"extra": "ignore"}
+
     agent_type: str = Field(..., pattern="^(literature|skeptic|auditor)$")
     task: dict = Field(default_factory=dict)
-    custos_url: str = Field(default="http://localhost:8000")
-    tenant_id: str = Field(default="default")
 
 
 
@@ -270,8 +281,8 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(400, f"Unknown agent type: {task.agent_type}")
 
         custos_client = CustosClient(
-            custos_url=task.custos_url,
-            tenant_id=task.tenant_id,
+            custos_url=os.getenv("LORL_CUSTOS_URL", "http://localhost:8000"),
+            tenant_id=os.getenv("LORL_CUSTOS_TENANT_ID", "default"),
         )  # jwt_secret resolves from LORL_CUSTOS_JWT_SECRET (dev fallback)
 
         ledger = app.state.ledger

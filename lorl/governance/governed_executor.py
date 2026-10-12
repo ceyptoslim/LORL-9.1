@@ -57,6 +57,20 @@ class GovernedExecutor:
         response = await self.agent.execute(task)
         resp_dict = response.to_dict()
 
+        def _withhold_output(d: dict) -> dict:
+            """Strip every output-bearing field from a denied response.
+
+            Fix (Oct 2026 audit): the deny/unavailable paths previously kept
+            the full agent output (data, reasoning, recommendations, metadata)
+            in the returned dict while merely flagging
+            ``agent_output_withheld: True`` — the withheld output was not
+            actually withheld. A denied response now carries governance
+            metadata only.
+            """
+            for key in ("data", "reasoning", "recommendations", "metadata"):
+                d.pop(key, None)
+            return d
+
         # 2. Evaluate decision content with CUSTOS
         content_str = (
             json.dumps(response.data)
@@ -79,6 +93,7 @@ class GovernedExecutor:
             resp_dict["governance_status"] = "denied"
             resp_dict["reason"] = "CUSTOS unavailable — execution denied (fail-closed)"
             resp_dict["agent_output_withheld"] = True
+            resp_dict = _withhold_output(resp_dict)
 
             if effective_ledger:
                 effective_ledger.append(
@@ -124,6 +139,7 @@ class GovernedExecutor:
             resp_dict["reason"] = eval_result.get("reason")
             resp_dict["triggered_rule"] = eval_result.get("triggered_rule")
             resp_dict["agent_output_withheld"] = True
+            resp_dict = _withhold_output(resp_dict)
 
             if effective_ledger:
                 effective_ledger.append(
