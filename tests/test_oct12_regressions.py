@@ -177,6 +177,7 @@ class TestLegacyLedgerMigration:
 
     def _make_legacy_db(self, path):
         import sqlite3
+
         from lorl.core.ledger import Event, EventType
 
         # build a legacy row exactly as the pre-chaining code wrote it:
@@ -222,6 +223,7 @@ class TestLegacyLedgerMigration:
 
     def test_deleting_pre_chaining_row_breaks_chain(self, tmp_path):
         import sqlite3
+
         from lorl.core.ledger import Event, EventLedger, EventType
 
         db_path = str(tmp_path / "legacy.db")
