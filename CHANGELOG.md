@@ -6,6 +6,37 @@ open" format — no claims beyond what the code and tests demonstrate.
 
 ---
 
+## [0.3.1] — 2026-10-12
+
+Governance hardening (external audit reconciliation, all fixes live-source-verified).
+
+### Ledger integrity
+- **Events are now hash-chained** (`prev_hash` / `event_hash` / `ledger_seq`): deleting
+  or reordering events fails `verify_integrity()` (previously per-event hashes only —
+  tamper-blind). In-place migration for pre-existing databases.
+
+### Backend correctness
+- **PostgreSQL path fixed**: psycopg2 -> psycopg3 (the v2 driver does not support the
+  `conn.execute` API the code uses) with `dict_row` rows; SQL placeholder translation
+  (`?` -> `%s`) so both backends work; driver pinned to `psycopg[binary]==3.2.3`.
+
+### Governance honesty
+- **`GovernedExecutor` genuinely withholds output** on deny and CUSTOS-unavailable —
+  `data` / `reasoning` / `recommendations` / `metadata` are stripped from the response
+  (the `agent_output_withheld: True` flag previously coexisted with the full output).
+- **Governance target is server-side config**: `/api/v1/governed-execute` no longer
+  accepts client-controlled `custos_url` / `tenant_id`; the CUSTOS endpoint comes from
+  `LORL_CUSTOS_URL` / `LORL_CUSTOS_TENANT_ID` env config.
+
+### Identity
+- **Treaty accept/reject support Ed25519 signature verification** (`signing_identity` +
+  `signature`); the string-compare actor check is documented as an authorization
+  placeholder until an authenticated-identity registry exists.
+
+### Tests
+- 115 passed (+11 regression tests covering every fix above).
+
+
 ## [0.3.0] — 2026-09-11
 
 ### Security
