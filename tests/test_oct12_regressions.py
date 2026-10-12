@@ -164,3 +164,78 @@ class TestTreatySignatures:
         sig = responder.sign(self._payload(treaty, "reject", "lab-b"))
         rejected = engine.reject(treaty, "lab-b", signature=sig, responder_identity=responder)
         assert rejected.status == TreatyStatus.REJECTED
+
+
+class TestLegacyLedgerMigration:
+    """Regression (Oct 2026): pre-chaining databases must migrate cleanly.
+
+    Found during final review: rows written before hash chaining shipped
+    kept event_hash='' after the ALTER migration, so a migrated ledger
+    failed verify_integrity() forever and the first new event chained to
+    an empty string. The backfill re-roots the whole chain from GENESIS.
+    """
+
+    def _make_legacy_db(self, path):
+        import sqlite3
+
+        from lorl.core.ledger import Event, EventType
+
+        # build a legacy row exactly as the pre-chaining code wrote it:
+        # real content_hash (integrity re-derives it), no chain columns
+        legacy = Event(
+            event_type=EventType.AGENT_DECISION,
+            actor_id="lab-a",
+            aggregate_id="t-1",
+            data={"legacy": True},
+            timestamp="2026-09-01T00:00:00",
+        )
+        conn = sqlite3.connect(path)
+        conn.execute(
+            """CREATE TABLE events (
+            event_id TEXT PRIMARY KEY, event_type TEXT NOT NULL,
+            actor_id TEXT NOT NULL, aggregate_id TEXT NOT NULL,
+            data TEXT NOT NULL, timestamp TEXT NOT NULL,
+            sequence INTEGER NOT NULL, content_hash TEXT NOT NULL)"""
+        )
+        conn.execute(
+            "INSERT INTO events VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                legacy.event_id, legacy.event_type.value, legacy.actor_id,
+                legacy.aggregate_id, __import__("json").dumps(legacy.data),
+                legacy.timestamp, 0, legacy.content_hash,
+            ),
+        )
+        conn.commit()
+        conn.close()
+        return legacy.event_id
+
+    def test_legacy_db_backfills_and_verifies(self, tmp_path):
+        from lorl.core.ledger import Event, EventLedger, EventType
+
+        db_path = str(tmp_path / "legacy.db")
+        self._make_legacy_db(db_path)
+        ledger = EventLedger(f"sqlite:///{db_path}")
+        ledger.append(
+            Event(event_type=EventType.AGENT_DECISION, actor_id="lab-b",
+                  aggregate_id="t-1", data={"x": 1})
+        )
+        assert ledger.verify_integrity() is True
+
+    def test_deleting_pre_chaining_row_breaks_chain(self, tmp_path):
+        import sqlite3
+
+        from lorl.core.ledger import Event, EventLedger, EventType
+
+        db_path = str(tmp_path / "legacy.db")
+        legacy_id = self._make_legacy_db(db_path)
+        ledger = EventLedger(f"sqlite:///{db_path}")
+        ledger.append(
+            Event(event_type=EventType.AGENT_DECISION, actor_id="lab-b",
+                  aggregate_id="t-1", data={"x": 1})
+        )
+        assert ledger.verify_integrity() is True
+        conn = sqlite3.connect(db_path)
+        conn.execute("DELETE FROM events WHERE event_id = ?", (legacy_id,))
+        conn.commit()
+        conn.close()
+        assert ledger.verify_integrity() is False

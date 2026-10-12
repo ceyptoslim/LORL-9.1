@@ -176,6 +176,36 @@ class EventLedger:
                 self._run(stmt)
             except Exception:
                 pass  # column already exists
+
+        # Backfill (Oct 2026): rows written before hash chaining shipped carry
+        # event_hash = ''. Without a backfill they fail verify_integrity()
+        # forever, and the first post-migration event would chain to an empty
+        # string. Re-root the whole chain deterministically (ledger_seq, then
+        # timestamp, then event_id) from GENESIS. Recomputing is a no-op for
+        # rows whose chain is already valid, so this is idempotent.
+        rows = (
+            self._run(
+                "SELECT event_id, content_hash, event_hash FROM events "
+                "ORDER BY ledger_seq ASC, timestamp ASC, event_id ASC"
+            )
+            .fetchall()
+            or []
+        )
+        if any(not (r["event_hash"] or "") for r in rows):
+            prev = "GENESIS"
+            seq = 0
+            for row in rows:
+                chained = hashlib.sha256(
+                    f"{prev}:{row['content_hash']}".encode()
+                ).hexdigest()
+                if row["event_hash"] != chained:
+                    self._run(
+                        "UPDATE events SET ledger_seq = ?, prev_hash = ?, "
+                        "event_hash = ? WHERE event_id = ?",
+                        (seq, prev, chained, row["event_id"]),
+                    )
+                prev = chained
+                seq += 1
         self._get_conn().commit()
 
     def append(self, event: Event) -> str:
@@ -206,7 +236,7 @@ class EventLedger:
             "SELECT event_hash FROM events ORDER BY ledger_seq DESC LIMIT 1"
         )
         prev_row = cursor.fetchone()
-        prev_hash = prev_row["event_hash"] if prev_row else "GENESIS"
+        prev_hash = (prev_row["event_hash"] if prev_row else "") or "GENESIS"
 
         content_hash = event.content_hash
         event_hash = hashlib.sha256(
