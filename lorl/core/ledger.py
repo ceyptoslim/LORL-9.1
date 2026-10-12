@@ -92,8 +92,23 @@ class EventLedger:
 
     def __init__(self, connection_string: str = "sqlite:///lorl.db"):
         self.connection_string = connection_string
+        self._backend = (
+            "postgres" if connection_string.startswith("postgresql://") else "sqlite"
+        )
         self._conn: Optional[sqlite3.Connection] = None
         self._init_db()
+
+    def _run(self, sql: str, params: tuple = ()):
+        """Execute SQL with backend-appropriate placeholders.
+
+        This ledger's queries are authored with SQLite-style ``?``
+        placeholders; PostgreSQL (psycopg) requires ``%s``. All call sites
+        go through this helper so both backends work from one source.
+        """
+        conn = self._get_conn()
+        if self._backend == "postgres":
+            sql = sql.replace("?", "%s")
+        return conn.execute(sql, params)
 
     def _get_conn(self) -> sqlite3.Connection:
         """Get or create a database connection."""
@@ -105,16 +120,19 @@ class EventLedger:
             self._conn = sqlite3.connect(db_path, check_same_thread=False)
             self._conn.row_factory = sqlite3.Row
         elif self.connection_string.startswith("postgresql://"):
-            # For PostgreSQL, use psycopg2
+            # For PostgreSQL, use psycopg 3 — the driver whose connection API
+            # (conn.execute, row_factory) this ledger is written against.
+            # Fix (Oct 2026 audit): previously imported psycopg2, whose
+            # connection object has no .execute() — the PostgreSQL backend
+            # crashed on first use.
             try:
-                import psycopg2
-                import psycopg2.extras
+                import psycopg
+                from psycopg.rows import dict_row
                 pg_url = self.connection_string
-                self._conn = psycopg2.connect(pg_url)
-                self._conn.row_factory = None  # psycopg2 uses cursor.fetchall()
+                self._conn = psycopg.connect(pg_url, row_factory=dict_row)
             except ImportError:
                 raise RuntimeError(
-                    "psycopg2 not installed. Install with: pip install psycopg2-binary"
+                    "psycopg not installed. Install with: pip install 'psycopg[binary]'"
                 )
         else:
             # Default to in-memory SQLite for tests
@@ -125,8 +143,7 @@ class EventLedger:
 
     def _init_db(self) -> None:
         """Initialize the events table."""
-        conn = self._get_conn()
-        conn.execute("""
+        self._run("""
             CREATE TABLE IF NOT EXISTS events (
                 event_id TEXT PRIMARY KEY,
                 event_type TEXT NOT NULL,
@@ -135,31 +152,72 @@ class EventLedger:
                 data TEXT NOT NULL,
                 timestamp TEXT NOT NULL,
                 sequence INTEGER NOT NULL,
-                content_hash TEXT NOT NULL
+                content_hash TEXT NOT NULL,
+                ledger_seq INTEGER NOT NULL DEFAULT 0,
+                prev_hash TEXT,
+                event_hash TEXT NOT NULL
             )
         """)
-        conn.execute("""
+        self._run("""
             CREATE INDEX IF NOT EXISTS idx_events_aggregate
             ON events(aggregate_id, sequence)
         """)
-        conn.commit()
+
+        # Migration (Oct 2026): upgrade pre-existing event tables to the
+        # chained schema. CREATE TABLE IF NOT EXISTS does not touch an
+        # existing table, so add the chain columns explicitly and tolerate
+        # the duplicate-column error when they already exist.
+        for stmt in (
+            "ALTER TABLE events ADD COLUMN ledger_seq INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE events ADD COLUMN prev_hash TEXT",
+            "ALTER TABLE events ADD COLUMN event_hash TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                self._run(stmt)
+            except Exception:
+                pass  # column already exists
+        self._get_conn().commit()
 
     def append(self, event: Event) -> str:
-        """Append an event to the ledger. Returns the event_id."""
-        conn = self._get_conn()
+        """Append an event to the ledger. Returns the event_id.
 
-        # Get next sequence for this aggregate
-        cursor = conn.execute(
+        Chain integrity (Oct 2026 fix): each event stores the hash of the
+        previous ledger event (``prev_hash``) and a chained ``event_hash``
+        computed over (prev_hash, content_hash). Deleting, reordering, or
+        editing any event breaks the chain for every later event — the
+        per-event ``content_hash`` alone could not detect removal/reordering.
+        """
+
+        # Next per-aggregate sequence
+        cursor = self._run(
             "SELECT COUNT(*) as count FROM events WHERE aggregate_id = ?",
             (event.aggregate_id,),
         )
         row = cursor.fetchone()
         event.sequence = row["count"] if row else 0
 
-        conn.execute(
+        # Next global ledger position + previous event's chained hash
+        cursor = self._run(
+            "SELECT COALESCE(MAX(ledger_seq), 0) + 1 AS nxt FROM events"
+        )
+        ledger_seq = cursor.fetchone()["nxt"]
+
+        cursor = self._run(
+            "SELECT event_hash FROM events ORDER BY ledger_seq DESC LIMIT 1"
+        )
+        prev_row = cursor.fetchone()
+        prev_hash = prev_row["event_hash"] if prev_row else "GENESIS"
+
+        content_hash = event.content_hash
+        event_hash = hashlib.sha256(
+            f"{prev_hash}:{content_hash}".encode()
+        ).hexdigest()
+
+        self._run(
             """INSERT INTO events
-               (event_id, event_type, actor_id, aggregate_id, data, timestamp, sequence, content_hash)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (event_id, event_type, actor_id, aggregate_id, data, timestamp,
+                sequence, content_hash, ledger_seq, prev_hash, event_hash)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 event.event_id,
                 event.event_type.value,
@@ -168,27 +226,29 @@ class EventLedger:
                 json.dumps(event.data),
                 event.timestamp,
                 event.sequence,
-                event.content_hash,
+                content_hash,
+                ledger_seq,
+                prev_hash,
+                event_hash,
             ),
         )
-        conn.commit()
+        self._get_conn().commit()
         return event.event_id
 
     def get_events(
         self, aggregate_id: str, event_type: Optional[EventType] = None
     ) -> list[dict]:
         """Retrieve events for an aggregate, optionally filtered by type."""
-        conn = self._get_conn()
 
         if event_type:
-            cursor = conn.execute(
+            cursor = self._run(
                 """SELECT * FROM events
                    WHERE aggregate_id = ? AND event_type = ?
                    ORDER BY sequence ASC""",
                 (aggregate_id, event_type.value),
             )
         else:
-            cursor = conn.execute(
+            cursor = self._run(
                 """SELECT * FROM events
                    WHERE aggregate_id = ?
                    ORDER BY sequence ASC""",
@@ -206,14 +266,16 @@ class EventLedger:
                 "timestamp": row["timestamp"],
                 "sequence": row["sequence"],
                 "content_hash": row["content_hash"],
+                "ledger_seq": row["ledger_seq"],
+                "prev_hash": row["prev_hash"],
+                "event_hash": row["event_hash"],
             }
             for row in rows
         ]
 
     def get_all_events(self) -> list[dict]:
         """Retrieve all events in the ledger."""
-        conn = self._get_conn()
-        cursor = conn.execute(
+        cursor = self._run(
             "SELECT * FROM events ORDER BY timestamp ASC"
         )
         rows = cursor.fetchall()
@@ -227,16 +289,26 @@ class EventLedger:
                 "timestamp": row["timestamp"],
                 "sequence": row["sequence"],
                 "content_hash": row["content_hash"],
+                "ledger_seq": row["ledger_seq"],
+                "prev_hash": row["prev_hash"],
+                "event_hash": row["event_hash"],
             }
             for row in rows
         ]
 
     def verify_integrity(self) -> bool:
-        """Verify that all event content hashes are valid (no tampering)."""
-        conn = self._get_conn()
-        cursor = conn.execute("SELECT * FROM events ORDER BY sequence ASC")
+        """Verify the full ledger chain (no tampering, no removal, no reorder).
+
+        Walks events in global ledger order and checks, for each event:
+        1. the per-event content hash still matches its stored data;
+        2. the stored ``prev_hash`` equals the previous event's chained hash;
+        3. the chained ``event_hash`` matches (prev_hash, content_hash).
+        Any deletion, reorder, or edit breaks the walk at that point.
+        """
+        cursor = self._run("SELECT * FROM events ORDER BY ledger_seq ASC")
         rows = cursor.fetchall()
 
+        prev_hash = "GENESIS"
         for row in rows:
             event = Event(
                 event_id=row["event_id"],
@@ -249,12 +321,19 @@ class EventLedger:
             )
             if event.content_hash != row["content_hash"]:
                 return False
+            if row["prev_hash"] != prev_hash:
+                return False
+            expected_hash = hashlib.sha256(
+                f"{row['prev_hash']}:{row['content_hash']}".encode()
+            ).hexdigest()
+            if row["event_hash"] != expected_hash:
+                return False
+            prev_hash = row["event_hash"]
         return True
 
     def get_event_count(self) -> int:
         """Return total number of events in the ledger."""
-        conn = self._get_conn()
-        cursor = conn.execute("SELECT COUNT(*) as count FROM events")
+        cursor = self._run("SELECT COUNT(*) as count FROM events")
         row = cursor.fetchone()
         return row["count"] if row else 0
 
