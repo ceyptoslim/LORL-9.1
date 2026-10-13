@@ -9,6 +9,13 @@ import pytest
 from lorl.core.identity import Identity
 
 
+from lorl.core.treaty_engine import (
+    TreatyEngine,
+    TreatyStatus,
+    TreatyTransitionError,
+)
+
+
 def _signed(identity, treaty_id, action, actor_id):
     """Sign the canonical action payload the engine verifies."""
     payload = json.dumps(
@@ -16,12 +23,6 @@ def _signed(identity, treaty_id, action, actor_id):
         sort_keys=True,
     ).encode()
     return identity.sign(payload)
-
-from lorl.core.treaty_engine import (
-    TreatyEngine,
-    TreatyStatus,
-    TreatyTransitionError,
-)
 
 
 class TestTreatyEngine:
