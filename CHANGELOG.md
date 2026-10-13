@@ -6,6 +6,32 @@ open" format — no claims beyond what the code and tests demonstrate.
 
 ---
 
+## [Unreleased]
+
+### Security (breaking) — required treaty signatures
+- Treaty accept/reject now REQUIRE a valid Ed25519 signature from the actor's
+  registered identity. Labs register identities at `/api/v1/labs`; the
+  `IdentityRegistry` resolves the actor on every action.
+- Fail-closed: an unregistered actor is rejected (403) — the legacy
+  string-compare authorization path is removed, not merely bypassed.
+- Identity-bound: a message signed with another lab's identity is rejected
+  before any state transition, even if the signature itself is valid.
+
+### Refactor — native-SQL ledger backends
+- Ledger storage split into per-backend implementations (`SQLiteBackend`
+  speaks `?`, `PostgresBackend` speaks `%s`). The runtime placeholder
+  rewriting (`sql.replace("?", "%s")`) is removed; each backend owns its
+  SQL natively. `ledger.py` net −71 lines.
+- Invariant tests enforce the contract: paramstyle purity per backend,
+  placeholder counts matching call-site params, query-key parity, and
+  fail-closed behavior when the Postgres driver is missing.
+
+### Tests
+- **129 passed / 1 skipped** (+15 since v0.3.1: signature enforcement,
+  foreign-identity rejection, backend invariants; +10 engine/API signature
+  tests in PR #13, +10 backend tests in PR #14, adjusted for suite
+  consolidation).
+
 ## [0.3.1] — 2026-10-12
 
 Governance hardening (external audit reconciliation, all fixes live-source-verified).
