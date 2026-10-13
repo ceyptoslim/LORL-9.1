@@ -7,8 +7,6 @@ import json
 import pytest
 
 from lorl.core.identity import Identity
-
-
 from lorl.core.treaty_engine import (
     TreatyEngine,
     TreatyStatus,
