@@ -70,6 +70,24 @@ class TestLabRegistration:
         assert data["count"] >= 2
 
 
+def _action_sig(client, actor_id, treaty_id, action):
+    """Sign a treaty action with the actor's registered identity."""
+    import json as _json
+
+    identity = client.app.state.identity_registry.get(actor_id)
+    assert identity is not None, f"actor {actor_id} must register first"
+    payload = _json.dumps(
+        {"treaty_id": treaty_id, "action": action, "actor_id": actor_id},
+        sort_keys=True,
+    ).encode()
+    return identity.sign(payload).hex()
+
+
+def _register(client, lab_id, name=""):
+    resp = client.post("/api/v1/labs", json={"lab_id": lab_id, "name": name})
+    assert resp.status_code in (200, 201), resp.text
+
+
 class TestTreatyAPI:
     def test_propose_treaty(self, client):
         with _mock_opa_allow():
@@ -86,6 +104,8 @@ class TestTreatyAPI:
             assert "treaty_id" in data
 
     def test_accept_treaty(self, client):
+        _register(client, "lab-x")
+        _register(client, "lab-y")
         with _mock_opa_allow():
             propose = client.post("/api/v1/treaties", json={
                 "title": "Data Sharing",
@@ -97,10 +117,53 @@ class TestTreatyAPI:
 
         with _mock_opa_allow():
             response = client.post(f"/api/v1/treaties/{treaty_id}/accept", json={
-                "actor_id": "lab-y"
+                "actor_id": "lab-y",
+                "signature": _action_sig(client, "lab-y", treaty_id, "accept"),
             })
             assert response.status_code == 200
             assert response.json()["status"] == "accepted"
+
+    def test_accept_treaty_forged_signature_rejected(self, client):
+        """A tampered signature must be rejected — actor_id alone proves nothing."""
+        _register(client, "lab-fx")
+        _register(client, "lab-fy")
+        with _mock_opa_allow():
+            propose = client.post("/api/v1/treaties", json={
+                "title": "Forged",
+                "proposer_id": "lab-fx",
+                "responder_id": "lab-fy",
+                "terms": {"revenue_share": 0.1},
+            })
+            treaty_id = propose.json()["treaty_id"]
+
+        good_sig = _action_sig(client, "lab-fy", treaty_id, "accept")
+        sig_bytes = bytes.fromhex(good_sig)
+        forged = (bytes([sig_bytes[0] ^ 1]) + sig_bytes[1:]).hex()  # flip one bit
+        with _mock_opa_allow():
+            response = client.post(f"/api/v1/treaties/{treaty_id}/accept", json={
+                "actor_id": "lab-fy",
+                "signature": forged,
+            })
+            assert response.status_code == 403
+
+    def test_accept_treaty_unregistered_actor_rejected(self, client):
+        """Fail-closed: no registered identity -> cannot verify -> 403."""
+        _register(client, "lab-ux")
+        with _mock_opa_allow():
+            propose = client.post("/api/v1/treaties", json={
+                "title": "Unregistered",
+                "proposer_id": "lab-ux",
+                "responder_id": "lab-uy",
+                "terms": {"revenue_share": 0.1},
+            })
+            treaty_id = propose.json()["treaty_id"]
+
+        with _mock_opa_allow():
+            response = client.post(f"/api/v1/treaties/{treaty_id}/accept", json={
+                "actor_id": "lab-uy",
+                "signature": "00" * 32,
+            })
+            assert response.status_code == 403
 
     def test_accept_treaty_wrong_actor(self, client):
         with _mock_opa_allow():
@@ -112,19 +175,25 @@ class TestTreatyAPI:
             })
             treaty_id = propose.json()["treaty_id"]
 
+        _register(client, "lab-z")
         with _mock_opa_allow():
             response = client.post(f"/api/v1/treaties/{treaty_id}/accept", json={
-                "actor_id": "lab-z"
+                "actor_id": "lab-z",
+                "signature": _action_sig(client, "lab-z", treaty_id, "accept"),
             })
             assert response.status_code == 403
 
     def test_accept_nonexistent_treaty(self, client):
+        _register(client, "lab-1")
         response = client.post("/api/v1/treaties/nonexistent/accept", json={
-            "actor_id": "lab-1"
+            "actor_id": "lab-1",
+            "signature": _action_sig(client, "lab-1", "nonexistent", "accept"),
         })
         assert response.status_code == 404
 
     def test_reject_treaty(self, client):
+        _register(client, "lab-r1")
+        _register(client, "lab-r2")
         with _mock_opa_allow():
             propose = client.post("/api/v1/treaties", json={
                 "title": "Rejected",
@@ -136,7 +205,8 @@ class TestTreatyAPI:
 
         with _mock_opa_allow():
             response = client.post(f"/api/v1/treaties/{treaty_id}/reject", json={
-                "actor_id": "lab-r2"
+                "actor_id": "lab-r2",
+                "signature": _action_sig(client, "lab-r2", treaty_id, "reject"),
             })
             assert response.status_code == 200
             assert response.json()["status"] == "rejected"

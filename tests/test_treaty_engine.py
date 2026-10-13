@@ -2,7 +2,20 @@
 Tests for LORL-9.1 Treaty Engine — State machine for lab agreements.
 """
 
+import json
+
 import pytest
+
+from lorl.core.identity import Identity
+
+
+def _signed(identity, treaty_id, action, actor_id):
+    """Sign the canonical action payload the engine verifies."""
+    payload = json.dumps(
+        {"treaty_id": treaty_id, "action": action, "actor_id": actor_id},
+        sort_keys=True,
+    ).encode()
+    return identity.sign(payload)
 
 from lorl.core.treaty_engine import (
     TreatyEngine,
@@ -32,7 +45,12 @@ class TestTreatyEngine:
             responder_id="lab-002",
             terms={"data_access": "read_only"},
         )
-        updated = engine.accept(treaty, "lab-002")
+        responder = Identity.create("lab-002")
+        updated = engine.accept(
+            treaty, "lab-002",
+            signature=_signed(responder, treaty.treaty_id, "accept", "lab-002"),
+            responder_identity=responder,
+        )
         assert updated.status == TreatyStatus.ACCEPTED
         assert updated.accepted_at is not None
 
@@ -44,8 +62,13 @@ class TestTreatyEngine:
             responder_id="lab-002",
             terms={"share": 0.5},
         )
+        intruder = Identity.create("lab-003")
         with pytest.raises(ValueError, match="Only responder"):
-            engine.accept(treaty, "lab-003")
+            engine.accept(
+                treaty, "lab-003",
+                signature=_signed(intruder, treaty.treaty_id, "accept", "lab-003"),
+                responder_identity=intruder,
+            )
 
     def test_reject_proposed_treaty(self):
         engine = TreatyEngine()
@@ -55,7 +78,12 @@ class TestTreatyEngine:
             responder_id="lab-002",
             terms={"duration": "6_months"},
         )
-        updated = engine.reject(treaty, "lab-002")
+        responder = Identity.create("lab-002")
+        updated = engine.reject(
+            treaty, "lab-002",
+            signature=_signed(responder, treaty.treaty_id, "reject", "lab-002"),
+            responder_identity=responder,
+        )
         assert updated.status == TreatyStatus.REJECTED
         assert updated.rejected_at is not None
 
@@ -67,7 +95,12 @@ class TestTreatyEngine:
             responder_id="lab-002",
             terms={"duration": "1_month"},
         )
-        treaty = engine.accept(treaty, "lab-002")
+        responder = Identity.create("lab-002")
+        treaty = engine.accept(
+            treaty, "lab-002",
+            signature=_signed(responder, treaty.treaty_id, "accept", "lab-002"),
+            responder_identity=responder,
+        )
         updated = engine.expire(treaty)
         assert updated.status == TreatyStatus.EXPIRED
 
@@ -90,6 +123,36 @@ class TestTreatyEngine:
             responder_id="lab-002",
             terms={"share": 0.5},
         )
-        treaty = engine.accept(treaty, "lab-002")
+        responder = Identity.create("lab-002")
+        treaty = engine.accept(
+            treaty, "lab-002",
+            signature=_signed(responder, treaty.treaty_id, "accept", "lab-002"),
+            responder_identity=responder,
+        )
         with pytest.raises(TreatyTransitionError):
-            engine.accept(treaty, "lab-002")
+            engine.accept(
+                treaty, "lab-002",
+                signature=_signed(responder, treaty.treaty_id, "accept", "lab-002"),
+                responder_identity=responder,
+            )
+
+    def test_accept_with_foreign_identity_rejected(self):
+        """Identity-binding: presenting lab-002's treaty with lab-003's
+        identity (even with a VALID signature) must be rejected — you
+        cannot authorize someone else's action with your own key."""
+        engine = TreatyEngine()
+        treaty = engine.propose(
+            title="Identity Binding",
+            proposer_id="lab-001",
+            responder_id="lab-002",
+            terms={"share": 0.3},
+        )
+        impostor = Identity.create("lab-003")
+        with pytest.raises(ValueError, match="Identity belongs to"):
+            engine.accept(
+                treaty, "lab-002",
+                signature=_signed(impostor, treaty.treaty_id, "accept", "lab-002"),
+                responder_identity=impostor,
+            )
+        # treaty must be untouched by the failed attempt
+        assert treaty.status == TreatyStatus.PROPOSED

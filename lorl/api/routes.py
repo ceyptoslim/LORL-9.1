@@ -20,7 +20,7 @@ from pydantic import BaseModel, Field
 
 from lorl import __version__
 from lorl.agents import AuditorAgent, LiteratureAgent, SkepticAgent
-from lorl.core.identity import Identity
+from lorl.core.identity import Identity, IdentityRegistry
 from lorl.core.ledger import Event, EventType
 from lorl.core.treaty_engine import TreatyEngine
 from lorl.governance import PolicyEnforcer
@@ -43,6 +43,12 @@ class TreatyProposal(BaseModel):
 
 class TreatyAction(BaseModel):
     actor_id: str = Field(..., min_length=1)
+    signature: str = Field(
+        ...,
+        min_length=1,
+        description="Hex-encoded Ed25519 signature over the canonical action "
+        "payload, signed by the actor's registered identity (fail-closed).",
+    )
 
 
 class AgentTask(BaseModel):
@@ -74,6 +80,11 @@ class GovernedAgentTask(BaseModel):
 def register_routes(app: FastAPI) -> None:
     """Register all API routes on the given FastAPI app."""
     engine = TreatyEngine()
+    # Fail-closed identity registry: treaty accept/reject actions are
+    # authorized ONLY by Ed25519 signatures verified against identities
+    # registered here (at lab registration time).
+    identity_registry = IdentityRegistry()
+    app.state.identity_registry = identity_registry
 
     # --- Health & Readiness ---
 
@@ -102,6 +113,7 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(409, f"Lab '{reg.lab_id}' already registered")
 
         identity = Identity.create(reg.lab_id, reg.name)
+        identity_registry.register(identity)
         lab_data = identity.to_dict()
         labs[reg.lab_id] = lab_data
 
@@ -167,8 +179,21 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(404, f"Treaty '{treaty_id}' not found")
 
         treaty = treaties[treaty_id]
+        identity = app.state.identity_registry.get(action.actor_id)
+        if identity is None:
+            raise HTTPException(
+                403,
+                f"No registered identity for '{action.actor_id}' — cannot "
+                "verify signature (fail-closed)",
+            )
         try:
-            updated = engine.accept(treaty, action.actor_id)
+            signature = bytes.fromhex(action.signature)
+        except ValueError:
+            raise HTTPException(400, "signature must be hex-encoded")
+        try:
+            updated = engine.accept(
+                treaty, action.actor_id, signature=signature, responder_identity=identity
+            )
         except ValueError as e:
             raise HTTPException(403, str(e))
 
@@ -191,8 +216,21 @@ def register_routes(app: FastAPI) -> None:
             raise HTTPException(404, f"Treaty '{treaty_id}' not found")
 
         treaty = treaties[treaty_id]
+        identity = app.state.identity_registry.get(action.actor_id)
+        if identity is None:
+            raise HTTPException(
+                403,
+                f"No registered identity for '{action.actor_id}' — cannot "
+                "verify signature (fail-closed)",
+            )
         try:
-            updated = engine.reject(treaty, action.actor_id)
+            signature = bytes.fromhex(action.signature)
+        except ValueError:
+            raise HTTPException(400, "signature must be hex-encoded")
+        try:
+            updated = engine.reject(
+                treaty, action.actor_id, signature=signature, responder_identity=identity
+            )
         except ValueError as e:
             raise HTTPException(403, str(e))
 

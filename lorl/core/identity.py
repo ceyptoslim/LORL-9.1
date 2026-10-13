@@ -134,3 +134,38 @@ class Identity:
             "created_at": self.created_at,
             "metadata": self.metadata,
         }
+
+
+class IdentityRegistry:
+    """Registry of lab identities for fail-closed treaty authorization.
+
+    Treaty accept/reject actions are authorized ONLY by an Ed25519
+    signature verified against the actor's registered identity. Without
+    a registered identity there is no way to verify an action — the
+    caller is rejected (fail-closed), never string-compared.
+    """
+
+    def __init__(self) -> None:
+        self._identities: dict = {}
+
+    def register(self, identity: "Identity") -> "Identity":
+        if not identity or not getattr(identity, "lab_id", None):
+            raise ValueError("Identity with a lab_id is required")
+        self._identities[identity.lab_id] = identity
+        return identity
+
+    def get(self, lab_id: str):
+        return self._identities.get(lab_id)
+
+    def __contains__(self, lab_id: object) -> bool:
+        return lab_id in self._identities
+
+    def verify_action(self, lab_id: str, payload: bytes, signature: bytes) -> bool:
+        """Verify a signed action payload against the registered identity."""
+        identity = self._identities.get(lab_id)
+        if identity is None:
+            return False
+        try:
+            return identity.verify(payload, signature)
+        except Exception:
+            return False
