@@ -125,23 +125,44 @@ class TreatyEngine:
             status=TreatyStatus.PROPOSED,
         )
 
+    def _verify_action_signature(
+        self, treaty: "Treaty", actor_id: str, action: str, signature, identity
+    ) -> None:
+        """Fail-closed Ed25519 verification of a treaty action."""
+        if identity is None or signature is None:
+            raise ValueError(
+                f"{action} requires both the actor's identity and a signature "
+                "(fail-closed — string actor_id alone proves nothing)"
+            )
+        if getattr(identity, "lab_id", None) != actor_id:
+            raise ValueError(
+                f"Identity belongs to '{getattr(identity, 'lab_id', None)}', "
+                f"not '{actor_id}'"
+            )
+        payload = json.dumps(
+            {"treaty_id": treaty.treaty_id, "action": action, "actor_id": actor_id},
+            sort_keys=True,
+        ).encode()
+        if not identity.verify(payload, signature):
+            raise ValueError(
+                f"Signature verification failed for {action} by '{actor_id}'"
+            )
+
     def accept(
         self,
         treaty: Treaty,
         responder_id: str,
-        signature: bytes = None,
-        responder_identity=None,
+        signature: bytes,
+        responder_identity,
     ) -> Treaty:
-        """Accept a proposed treaty.
+        """Accept a proposed treaty (signature REQUIRED, fail-closed).
 
-        Authorization caveat (Oct 2026 audit): ``responder_id`` is a
-        string comparison — by itself it proves nothing about who is
-        calling. When ``responder_identity`` (an lorl.core.identity.Identity
-        holding the responder's Ed25519 public key) and ``signature`` are
-        provided, the signature is verified over the action payload BEFORE
-        the transition — a forged actor_id with an invalid signature is
-        rejected. Requiring authenticated identities end-to-end is a
-        pending API-contract decision."""
+        The transition is authorized only by a valid Ed25519 signature
+        from the responder's registered identity over the canonical
+        action payload. A missing identity, a signature that fails
+        verification, or an identity belonging to a different lab is
+        rejected before any state changes.
+        """
         if treaty.status != TreatyStatus.PROPOSED:
             raise TreatyTransitionError(treaty.status, "accept")
 
@@ -151,27 +172,7 @@ class TreatyEngine:
                 f"not '{responder_id}'"
             )
 
-        # Optional Ed25519 verification (Oct 2026 audit): responder_id is a
-        # string comparison and proves nothing by itself. When an identity
-        # object and signature are supplied, verify before transitioning.
-        if responder_identity is not None or signature is not None:
-            if responder_identity is None or signature is None:
-                raise ValueError(
-                    "Signature verification requires BOTH signature and "
-                    "responder_identity"
-                )
-            payload = json.dumps(
-                {
-                    "treaty_id": getattr(treaty, "treaty_id", treaty.title),
-                    "action": "accept",
-                    "actor_id": responder_id,
-                },
-                sort_keys=True,
-            ).encode()
-            if not responder_identity.verify(payload, signature):
-                raise ValueError(
-                    f"Signature verification failed for responder '{responder_id}'"
-                )
+        self._verify_action_signature(treaty, responder_id, "accept", signature, responder_identity)
 
         treaty.status = TreatyStatus.ACCEPTED
         treaty.accepted_at = datetime.now(timezone.utc).isoformat()
@@ -182,48 +183,27 @@ class TreatyEngine:
         self,
         treaty: Treaty,
         responder_id: str,
-        signature: bytes = None,
-        responder_identity=None,
+        signature: bytes,
+        responder_identity,
     ) -> Treaty:
-        """Reject a proposed treaty.
+        """Reject a proposed treaty (signature REQUIRED, fail-closed).
 
-        Authorization caveat (Oct 2026 audit): ``responder_id`` is a
-        string comparison — by itself it proves nothing about who is
-        calling. When ``responder_identity`` (an lorl.core.identity.Identity
-        holding the responder's Ed25519 public key) and ``signature`` are
-        provided, the signature is verified over the action payload BEFORE
-        the transition — a forged actor_id with an invalid signature is
-        rejected. Requiring authenticated identities end-to-end is a
-        pending API-contract decision."""
+        The transition is authorized only by a valid Ed25519 signature
+        from the responder's registered identity over the canonical
+        action payload. A missing identity, a signature that fails
+        verification, or an identity belonging to a different lab is
+        rejected before any state changes.
+        """
         if treaty.status != TreatyStatus.PROPOSED:
             raise TreatyTransitionError(treaty.status, "reject")
 
         if responder_id != treaty.responder_id:
             raise ValueError(
-                f"Only responder '{treaty.responder_id}' can reject this treaty"
+                f"Only responder '{treaty.responder_id}' can reject this treaty, "
+                f"not '{responder_id}'"
             )
 
-        # Optional Ed25519 verification (Oct 2026 audit): responder_id is a
-        # string comparison and proves nothing by itself. When an identity
-        # object and signature are supplied, verify before transitioning.
-        if responder_identity is not None or signature is not None:
-            if responder_identity is None or signature is None:
-                raise ValueError(
-                    "Signature verification requires BOTH signature and "
-                    "responder_identity"
-                )
-            payload = json.dumps(
-                {
-                    "treaty_id": getattr(treaty, "treaty_id", treaty.title),
-                    "action": "reject",
-                    "actor_id": responder_id,
-                },
-                sort_keys=True,
-            ).encode()
-            if not responder_identity.verify(payload, signature):
-                raise ValueError(
-                    f"Signature verification failed for responder '{responder_id}'"
-                )
+        self._verify_action_signature(treaty, responder_id, "reject", signature, responder_identity)
 
         treaty.status = TreatyStatus.REJECTED
         treaty.rejected_at = datetime.now(timezone.utc).isoformat()
