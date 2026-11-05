@@ -4,7 +4,7 @@ LORL-9.1 Base Agent — Abstract interface for all LORL agents.
 All agents (Literature, Skeptic, Auditor) implement this interface.
 The execute() method takes a task dict and returns an AgentResponse.
 """
-# Copyright (C) 2024-2026 FroLife Productions
+# Copyright (C) 2024-2026 Tavares Heath Sr. (doing business as FroLife Productions)
 # Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
 # See LICENSE file for details. Commercial license available upon request.
 

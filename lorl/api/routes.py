@@ -4,7 +4,7 @@ LORL-9.1 API Routes — All REST endpoint handlers.
 Routes are registered on the FastAPI app via register_routes(app).
 This keeps the main.py clean and makes routes testable independently.
 """
-# Copyright (C) 2024-2026 FroLife Productions
+# Copyright (C) 2024-2026 Tavares Heath Sr. (doing business as FroLife Productions)
 # Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
 # See LICENSE file for details. Commercial license available upon request.
 
