@@ -4,7 +4,7 @@ LORL-9.1 Identity Module — Ed25519 cryptographic identity for labs and agents.
 Each lab or agent in the LORL network gets an Ed25519 keypair for signing
 treaty agreements, ledger events, and audit records.
 """
-# Copyright (C) 2024-2026 FroLife Productions
+# Copyright (C) 2024-2026 Tavares Heath Sr. (doing business as FroLife Productions)
 # Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
 # See LICENSE file for details. Commercial license available upon request.
 

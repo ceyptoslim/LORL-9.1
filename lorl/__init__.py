@@ -5,7 +5,7 @@ Provides Ed25519 cryptographic identity, PostgreSQL event-sourced ledger,
 treaty engine for inter-lab agreements, and multi-agent orchestration
 with CUSTOS-Core governance integration.
 """
-# Copyright (C) 2024-2026 FroLife Productions
+# Copyright (C) 2024-2026 Tavares Heath Sr. (doing business as FroLife Productions)
 # Licensed under the GNU Affero General Public License v3.0 (AGPL-3.0)
 # See LICENSE file for details. Commercial license available upon request.
 
