@@ -8,6 +8,37 @@ open" format — no claims beyond what the code and tests demonstrate.
 
 ## [Unreleased]
 
+### Fixed — governance runs before the agent, and one identity per call
+
+A forensic audit of the CUSTOS-Core integration on 17 November 2026 found two
+critical defects that the suite could not see, because every governance test
+replaces `custos_client.evaluate` with a mock whose signature mirrors the
+shipped one. Nothing in the suite crossed the seam.
+
+- **The decision came after the action.** `GovernedExecutor` dispatched the agent
+  and then submitted its output for evaluation, so a DENY described work that had
+  already happened. Reproduced with a stub agent: `governance_status: denied` with
+  the side effect standing. The task intent is now evaluated **before** dispatch
+  and the agent does not run on any refusal. The output check remains, and is
+  labelled `decision_stage: post_execution` with the note that it did not prevent
+  the action.
+- **Every authenticated call was refused.** The client signed `sub = tenant_id`
+  while the executor sent `client_id="lorl"`. CUSTOS rejects that mismatch with
+  403, so every governed execution was denied and recorded as a policy refusal.
+  One value, `client_id`, now produces both the token subject and the body field;
+  `tenant_id` travels as its own claim. Tokens also carry `exp` (300s); they
+  previously never expired.
+
+### Known open
+- The ledger hashes each record but keeps no `previous_hash` and no external
+  anchor, so it detects edits to a record and not deletion of records.
+- The gate sits on the agent's `execute()`, not on individual tool calls below it.
+
+### Tests
+- **133 passed / 1 skipped** (+4): agent not executed on deny, not executed when
+  CUSTOS is unavailable, identity rejection reported as identity rather than as a
+  policy denial, and one execution on approval with the stage recorded.
+
 ### Security (breaking) — required treaty signatures
 - Treaty accept/reject now REQUIRE a valid Ed25519 signature from the actor's
   registered identity. Labs register identities at `/api/v1/labs`; the
