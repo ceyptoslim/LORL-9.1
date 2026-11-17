@@ -10,6 +10,7 @@ LORL-9.1 Governed Executor — Wrapper that executes agents with CUSTOS-Core pol
 from __future__ import annotations
 
 import json
+import uuid
 from typing import Optional
 
 from lorl.agents.base_agent import BaseAgent
@@ -45,15 +46,70 @@ class GovernedExecutor:
     ) -> dict:
         """Execute the wrapped agent task with CUSTOS policy evaluation.
 
-        Fail-closed (output governance): the agent runs (side-effect-free
-        research computation), and its output is returned ONLY if CUSTOS
-        allows it. If CUSTOS is unavailable, the output is DENIED and withheld
-        (`agent_output_withheld: True`). No governance decision → no governed
-        output reaches the caller.
+        Fail-closed (input and output governance): the task intent is submitted
+        to CUSTOS BEFORE the agent is dispatched, and on any refusal — policy
+        DENY, unavailable gate, or a rejected request identity — the agent does
+        not run at all. After an approved execution the output is checked again
+        and is withheld if that check refuses it, but the second check is
+        recorded as a post-execution observation: it cannot prevent the action
+        that already happened, and the record says so.
         """
         effective_ledger = ledger if ledger is not None else self.ledger
 
-        # 1. Execute agent task
+        # 0. Ask first. Nothing is dispatched on a refusal.
+        intent = json.dumps(task, sort_keys=True, default=str)
+        pre = await self.custos_client.evaluate(content=intent)
+        pre_allowed = bool(pre.get("allowed", False))
+        pre_failure = pre.get("failure_class")
+        pre_unavailable = pre_failure == "UNAVAILABLE" or (
+            not pre_allowed and pre.get("reason") == "CUSTOS unavailable"
+        )
+
+        if not pre_allowed:
+            if pre_unavailable:
+                reason = "CUSTOS unavailable — execution denied (fail-closed)"
+            elif pre_failure == "IDENTITY":
+                reason = (
+                    "CUSTOS rejected the request identity — execution denied "
+                    "(fail-closed). Check the signing secret and client_id."
+                )
+            else:
+                reason = pre.get("reason")
+            refusal = {
+                "agent_id": getattr(self.agent, "agent_id", None),
+                "agent_type": getattr(self.agent, "agent_type", None),
+                "task_id": str(uuid.uuid4()),
+                "decision_stage": "pre_execution",
+                "agent_executed": False,
+                "custos_approved": False,
+                "governance_status": "denied",
+                "reason": reason,
+                "triggered_rule": pre.get("triggered_rule"),
+                "failure_class": pre_failure,
+                "agent_output_withheld": True,
+            }
+            if pre_unavailable:
+                refusal["fail_closed"] = True
+            if effective_ledger:
+                effective_ledger.append(
+                    Event(
+                        event_type=EventType.GOVERNANCE_CHECK,
+                        actor_id=refusal["agent_id"],
+                        aggregate_id=refusal["task_id"],
+                        data={
+                            "custos_approved": False,
+                            "reason": reason,
+                            "triggered_rule": pre.get("triggered_rule"),
+                            "failure_class": pre_failure,
+                            "decision_stage": "pre_execution",
+                            "fail_closed": pre_unavailable,
+                            "prevented": True,
+                        },
+                    )
+                )
+            return refusal
+
+        # 1. Approved: now the agent may run.
         response = await self.agent.execute(task)
         resp_dict = response.to_dict()
 
@@ -77,9 +133,7 @@ class GovernedExecutor:
             if isinstance(response.data, dict)
             else str(response.data)
         )
-        eval_result = await self.custos_client.evaluate(
-            content=content_str, client_id="lorl"
-        )
+        eval_result = await self.custos_client.evaluate(content=content_str)
 
         is_unavailable = (
             not eval_result.get("allowed", False)
@@ -114,6 +168,10 @@ class GovernedExecutor:
             # CUSTOS approved execution
             resp_dict["custos_approved"] = True
             resp_dict["governance_status"] = "approved"
+            resp_dict["decision_stage"] = "pre_execution"
+            resp_dict["custos_post_check_note"] = (
+                "Recorded after execution; this check did not prevent the action."
+            )
             if "audit_record_hash" in eval_result:
                 resp_dict["custos_audit_hash"] = eval_result["audit_record_hash"]
 

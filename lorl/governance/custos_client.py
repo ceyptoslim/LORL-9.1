@@ -10,7 +10,8 @@ LORL-9.1 CUSTOS-Core Client — Async client for CUSTOS governance evaluation.
 from __future__ import annotations
 
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import httpx
 import jwt
@@ -26,24 +27,38 @@ class CustosClient:
         custos_url: str = "http://localhost:8000",
         jwt_secret: str | None = None,
         tenant_id: str = "default",
+        client_id: str = "lorl",
+        token_ttl_seconds: int = 300,
     ):
         self.custos_url = custos_url.rstrip("/")
         # Resolve from env first (LORL_CUSTOS_JWT_SECRET); dev fallback only.
         self.jwt_secret = jwt_secret or os.getenv("LORL_CUSTOS_JWT_SECRET", self._DEV_DEFAULT_SECRET)
         self.tenant_id = tenant_id
+        # CUSTOS rejects a request whose bearer-token subject differs from the
+        # body's client_id (403). Both are therefore derived from this one value;
+        # tenant_id is sent as its own claim and is not an identity.
+        self.client_id = client_id
+        self.token_ttl_seconds = token_ttl_seconds
 
     def create_token(self) -> str:
         """Generate a JWT token signed with secret using HS256 algorithm."""
         # Security: JWT sub claim is bound to tenant_id to prevent cross-tenant access (fixes CUSTOS-CORE audit finding)
+        now = datetime.now(timezone.utc)
         payload = {
-            "sub": self.tenant_id,
+            "sub": self.client_id,
             "tenant_id": self.tenant_id,
-            "iat": datetime.now(timezone.utc),
+            "iat": now,
+            "exp": now + timedelta(seconds=self.token_ttl_seconds),
         }
         return jwt.encode(payload, self.jwt_secret, algorithm="HS256")
 
-    async def evaluate(self, content: str, client_id: str = "lorl") -> dict:
-        """Submit content to CUSTOS /v1/evaluate endpoint for governance approval."""
+    async def evaluate(self, content: str, client_id: Optional[str] = None) -> dict:
+        """Submit content to CUSTOS /v1/evaluate for a governance decision.
+
+        ``client_id`` is an escape hatch for tests; when omitted the client's own
+        identity is used, which is the only value the token subject can match.
+        """
+        client_id = client_id or self.client_id
         url = f"{self.custos_url}/v1/evaluate"
         token = self.create_token()
         headers = {

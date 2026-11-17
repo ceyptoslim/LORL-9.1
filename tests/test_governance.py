@@ -29,9 +29,13 @@ def test_custos_client_creates_valid_jwt():
     assert isinstance(token, str)
 
     decoded = jwt.decode(token, TEST_JWT_SECRET, algorithms=["HS256"])
-    # Security: JWT sub claim is bound to tenant_id to prevent cross-tenant access (fixes CUSTOS-CORE audit finding)
-    assert decoded["sub"] == "tenant-lab-alpha"
+    # CUSTOS refuses a request whose token subject differs from the body's
+    # client_id (403). The subject must therefore BE the identity; the tenant is
+    # a separate claim. Conflating the two made every authenticated call 403 and
+    # was recorded in the ledger as a policy refusal.
+    assert decoded["sub"] == client.client_id
     assert decoded["tenant_id"] == "tenant-lab-alpha"
+    assert "exp" in decoded
 
 
 @pytest.mark.asyncio
@@ -240,3 +244,95 @@ class TestGovernedExecutionAPI:
         assert data["governance_status"] == "denied"
         assert "CUSTOS unavailable" in data["reason"]
         assert data.get("ungoverned") is not True
+
+
+# ---------------------------------------------------------------------------
+# Regression guards from the 17 November 2026 forensic audit.
+# ---------------------------------------------------------------------------
+class _RecordingAgent:
+    """An agent that records whether it was ever dispatched."""
+
+    agent_id = "recording-agent"
+    agent_type = "recording"
+
+    def __init__(self):
+        self.executed = 0
+
+    async def execute(self, task):
+        from lorl.agents.base_agent import AgentResponse
+
+        self.executed += 1
+        return AgentResponse(
+            agent_id=self.agent_id,
+            agent_type=self.agent_type,
+            data={"side_effect": "performed", "task": task},
+        )
+
+
+@pytest.mark.asyncio
+async def test_agent_is_not_executed_when_custos_denies(monkeypatch):
+    """The refusal must precede the action, not describe it afterwards."""
+    agent = _RecordingAgent()
+    client = CustosClient("http://localhost:8000", TEST_JWT_SECRET, "tenant-1")
+
+    async def deny(content, client_id=None):
+        return {"allowed": False, "reason": "Policy violation", "triggered_rule": "r1"}
+
+    monkeypatch.setattr(client, "evaluate", deny)
+    result = await GovernedExecutor(agent=agent, custos_client=client).execute({"do": "x"})
+
+    assert agent.executed == 0
+    assert result["agent_executed"] is False
+    assert result["decision_stage"] == "pre_execution"
+    assert result["governance_status"] == "denied"
+
+
+@pytest.mark.asyncio
+async def test_agent_is_not_executed_when_custos_is_unavailable(monkeypatch):
+    agent = _RecordingAgent()
+    client = CustosClient("http://localhost:8000", TEST_JWT_SECRET, "tenant-1")
+
+    async def unavailable(content, client_id=None):
+        return {"allowed": False, "reason": "CUSTOS unavailable"}
+
+    monkeypatch.setattr(client, "evaluate", unavailable)
+    result = await GovernedExecutor(agent=agent, custos_client=client).execute({"do": "x"})
+
+    assert agent.executed == 0
+    assert result["fail_closed"] is True
+
+
+@pytest.mark.asyncio
+async def test_identity_rejection_is_not_recorded_as_a_policy_denial(monkeypatch):
+    agent = _RecordingAgent()
+    client = CustosClient("http://localhost:8000", TEST_JWT_SECRET, "tenant-1")
+
+    async def rejected(content, client_id=None):
+        return {
+            "allowed": False,
+            "reason": "CUSTOS returned HTTP 403",
+            "failure_class": "IDENTITY",
+        }
+
+    monkeypatch.setattr(client, "evaluate", rejected)
+    result = await GovernedExecutor(agent=agent, custos_client=client).execute({"do": "x"})
+
+    assert agent.executed == 0
+    assert result["failure_class"] == "IDENTITY"
+    assert "identity" in result["reason"].lower()
+
+
+@pytest.mark.asyncio
+async def test_approved_task_executes_once_and_records_the_stage(monkeypatch):
+    agent = _RecordingAgent()
+    client = CustosClient("http://localhost:8000", TEST_JWT_SECRET, "tenant-1")
+
+    async def allow(content, client_id=None):
+        return {"allowed": True, "audit_record_hash": "hash_allowed"}
+
+    monkeypatch.setattr(client, "evaluate", allow)
+    result = await GovernedExecutor(agent=agent, custos_client=client).execute({"do": "x"})
+
+    assert agent.executed == 1
+    assert result["decision_stage"] == "pre_execution"
+    assert result["custos_approved"] is True
